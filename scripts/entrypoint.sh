@@ -68,6 +68,11 @@ fi
 chown root:root "$CONF_DIR/exim4.conf" 2>/dev/null || true
 chmod 644 "$CONF_DIR/exim4.conf"
 chown -R "$EXIM_USER" "$DKIM_DIR" "$TLS_DIR" 2>/dev/null || true
+# The spool is a bind-mounted volume owned by the host user; Exim runs as
+# EXIM_USER and must own it to create the input/ queue dirs (else 421).
+mkdir -p /var/spool/exim4
+chown -R "$EXIM_USER" /var/spool/exim4 2>/dev/null || true
+chmod 750 /var/spool/exim4
 
 # 5. Validate config, then run
 exim -C "$CONF_DIR/exim4.conf" -bV >/dev/null

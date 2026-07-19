@@ -133,7 +133,10 @@ remote_smtp:
   driver            = smtp
   dkim_domain       = $sender_address_domain
   dkim_selector     = DKIM_SELECTOR_V
-  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{}}
+  # $dkim_domain comes from the message (tainted); Exim refuses tainted
+  # data in a filename. dsearch looks the key file up in the dkim dir and
+  # returns an UNtainted path — empty (no signing) if the key is absent.
+  dkim_private_key  = ${lookup{${dkim_domain}.private}dsearch,ret=full{/etc/exim4/dkim}{$value}{}}
   dkim_canon        = relaxed
   helo_data         = PRIMARY_HOSTNAME_V
 
@@ -144,7 +147,7 @@ smarthost_smtp:
   hosts_require_tls  = SMARTHOST
   dkim_domain       = $sender_address_domain
   dkim_selector     = DKIM_SELECTOR_V
-  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{}}
+  dkim_private_key  = ${lookup{${dkim_domain}.private}dsearch,ret=full{/etc/exim4/dkim}{$value}{}}
   dkim_canon        = relaxed
   helo_data         = PRIMARY_HOSTNAME_V
 

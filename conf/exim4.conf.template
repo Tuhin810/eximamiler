@@ -124,11 +124,16 @@ dnslookup_route:
 begin transports
 
 # DKIM-signing outbound transport for direct-to-MX delivery.
+# GLOBAL/multi-domain: sign using whatever domain the envelope sender
+# uses. If a DKIM key exists for that domain the message is signed;
+# otherwise dkim_private_key expands empty and Exim sends it UNSIGNED
+# (still delivers). So any sender domain works out of the box; run
+# add-domain.sh <domain> to enable DKIM signing for a new one.
 remote_smtp:
   driver            = smtp
-  dkim_domain       = DKIM_DOMAINS
+  dkim_domain       = $sender_address_domain
   dkim_selector     = DKIM_SELECTOR_V
-  dkim_private_key  = /etc/exim4/dkim/${dkim_domain}.private
+  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{}}
   dkim_canon        = relaxed
   helo_data         = PRIMARY_HOSTNAME_V
 
@@ -137,9 +142,9 @@ smarthost_smtp:
   driver            = smtp
   hosts_require_auth = SMARTHOST
   hosts_require_tls  = SMARTHOST
-  dkim_domain       = DKIM_DOMAINS
+  dkim_domain       = $sender_address_domain
   dkim_selector     = DKIM_SELECTOR_V
-  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{0}}
+  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{}}
   dkim_canon        = relaxed
   helo_data         = PRIMARY_HOSTNAME_V
 

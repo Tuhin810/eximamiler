@@ -9,7 +9,8 @@ RUN apt-get update \
 COPY conf/exim4.conf.template /opt/exim/exim4.conf.template
 COPY scripts/entrypoint.sh    /opt/exim/entrypoint.sh
 COPY scripts/gen-dkim.sh      /opt/exim/gen-dkim.sh
-RUN chmod +x /opt/exim/entrypoint.sh /opt/exim/gen-dkim.sh
+COPY scripts/add-domain.sh    /opt/exim/add-domain.sh
+RUN chmod +x /opt/exim/entrypoint.sh /opt/exim/gen-dkim.sh /opt/exim/add-domain.sh
 
 EXPOSE 587
 ENTRYPOINT ["/opt/exim/entrypoint.sh"]

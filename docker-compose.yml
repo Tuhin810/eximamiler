@@ -1,0 +1,26 @@
+services:
+  exim:
+    build: .
+    container_name: proxymail-exim
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${SUBMISSION_PORT:-587}:587"
+    volumes:
+      # Persist DKIM keys and TLS certs across restarts.
+      - ./data/dkim:/etc/exim4/dkim
+      - ./data/tls:/etc/exim4/tls
+      - ./data/spool:/var/spool/exim4
+
+  # Optional lightweight management API (health, queue depth, DKIM rotate)
+  mgmt:
+    build: ./mgmt
+    container_name: proxymail-exim-mgmt
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [exim]
+    ports:
+      - "${MGMT_PORT:-8443}:8443"
+    volumes:
+      - ./data/dkim:/etc/exim4/dkim:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro

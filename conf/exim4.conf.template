@@ -1,0 +1,151 @@
+######################################################################
+# exim4.conf.template  —  Proxy-Mailer sending node
+#
+# Rendered at container start by scripts/entrypoint.sh (envsubst).
+# Supports two delivery modes via ${DELIVERY_MODE}:
+#   - submission : hand every message to a smarthost (upstream relay)
+#   - direct-mx  : Exim looks up recipient MX and delivers directly
+#
+# The Node backend (Repo 1) only ever talks to this box over
+# SMTP-AUTH on the submission port. It does NOT care which mode is
+# active — mode is decided here.
+######################################################################
+
+######################## MACROS / KNOBS ##############################
+# These are substituted from environment variables at render time.
+DELIVERY_MODE      = ${DELIVERY_MODE}
+# Longer macro names must be defined before any shorter name that is a
+# substring of them (Exim rule) — so SMARTHOST_USER/PASS precede SMARTHOST.
+SMARTHOST_USER     = ${SMARTHOST_USER}
+SMARTHOST_PASS     = ${SMARTHOST_PASS}
+SMARTHOST          = ${SMARTHOST}
+PRIMARY_HOSTNAME_V = ${PRIMARY_HOSTNAME}
+DKIM_SELECTOR_V    = ${DKIM_SELECTOR}
+DKIM_DOMAINS       = ${DKIM_DOMAINS}
+SUBMISSION_PORT_V  = ${SUBMISSION_PORT}
+
+primary_hostname = PRIMARY_HOSTNAME_V
+
+# Only accept mail on the submission port and only after AUTH.
+# (The listener itself is bound in the exim command line / entrypoint.)
+domainlist local_domains    =
+domainlist relay_to_domains = *
+hostlist   relay_from_hosts = 127.0.0.1 : ::1
+
+# Require TLS + AUTH before accepting any recipient. This box is a
+# pure submission node for the app — no anonymous relaying, ever.
+acl_smtp_rcpt        = acl_check_rcpt
+acl_smtp_data        = acl_check_data
+acl_smtp_mail        = acl_check_mail
+
+tls_advertise_hosts  = *
+tls_certificate      = /etc/exim4/tls/fullchain.pem
+tls_privatekey       = /etc/exim4/tls/privkey.pem
+
+# Advertise AUTH only over TLS.
+auth_advertise_hosts = ${if def:tls_in_cipher {*}{}}
+
+log_selector = +smtp_connection +tls_peerdn +received_recipients +delivery_size +dkim +smtp_mailauth
+message_size_limit = 30M
+
+############################### ACLs ##################################
+begin acl
+
+acl_check_mail:
+  accept
+
+acl_check_rcpt:
+  # Never allow a null sender to relay.
+  deny    message = Relaying denied. Authenticate first.
+          !authenticated = *
+          !hosts         = +relay_from_hosts
+
+  # Authenticated app submission — accept for any destination.
+  accept  authenticated = *
+  accept  hosts         = +relay_from_hosts
+
+  deny    message = Relaying not permitted
+
+acl_check_data:
+  accept
+
+############################ AUTHENTICATORS ###########################
+begin authenticators
+
+# The app authenticates with credentials provisioned in /etc/exim4/passwd
+# (user:crypted-pass), checked here. LOGIN + PLAIN, TLS-only.
+login_server:
+  driver                     = plaintext
+  public_name                = LOGIN
+  server_prompts             = Username:: : Password::
+  server_condition           = ${if crypteq{$auth2}{${extract{1}{:}{${lookup{$auth1}lsearch{/etc/exim4/passwd}{$value}fail}}}}{yes}{no}}
+  server_set_id              = $auth1
+  server_advertise_condition = ${if def:tls_in_cipher}
+
+# Client authenticator: how THIS node logs in to the upstream smarthost
+# (submission mode only). Declared alongside the server authenticators —
+# Exim allows just one authenticators section.
+smarthost_login:
+  driver        = plaintext
+  public_name   = LOGIN
+  client_send   = : SMARTHOST_USER : SMARTHOST_PASS
+
+plain_server:
+  driver                     = plaintext
+  public_name                = PLAIN
+  server_prompts             = :
+  server_condition           = ${if crypteq{$auth3}{${extract{1}{:}{${lookup{$auth2}lsearch{/etc/exim4/passwd}{$value}fail}}}}{yes}{no}}
+  server_set_id              = $auth2
+  server_advertise_condition = ${if def:tls_in_cipher}
+
+############################### ROUTERS ##############################
+begin routers
+
+# ---- SUBMISSION MODE: send everything to the upstream smarthost ----
+smarthost_route:
+  driver          = manualroute
+  condition       = ${if eq{DELIVERY_MODE}{submission}{yes}{no}}
+  domains         = ! +local_domains
+  transport       = smarthost_smtp
+  route_list      = * SMARTHOST
+  host_find_failed = defer
+  no_more
+
+# ---- DIRECT-MX MODE: look up recipient MX and deliver directly -----
+dnslookup_route:
+  driver          = dnslookup
+  condition       = ${if eq{DELIVERY_MODE}{direct-mx}{yes}{no}}
+  domains         = ! +local_domains
+  transport       = remote_smtp
+  ignore_target_hosts = 0.0.0.0 : 127.0.0.0/8 : ::1
+  no_more
+
+############################## TRANSPORTS ############################
+begin transports
+
+# DKIM-signing outbound transport for direct-to-MX delivery.
+remote_smtp:
+  driver            = smtp
+  dkim_domain       = DKIM_DOMAINS
+  dkim_selector     = DKIM_SELECTOR_V
+  dkim_private_key  = /etc/exim4/dkim/${dkim_domain}.private
+  dkim_canon        = relaxed
+  helo_data         = PRIMARY_HOSTNAME_V
+
+# Smarthost transport (also DKIM-signs so the upstream sees signed mail).
+smarthost_smtp:
+  driver            = smtp
+  hosts_require_auth = SMARTHOST
+  hosts_require_tls  = SMARTHOST
+  dkim_domain       = DKIM_DOMAINS
+  dkim_selector     = DKIM_SELECTOR_V
+  dkim_private_key  = ${if exists{/etc/exim4/dkim/${dkim_domain}.private}{/etc/exim4/dkim/${dkim_domain}.private}{0}}
+  dkim_canon        = relaxed
+  helo_data         = PRIMARY_HOSTNAME_V
+
+############################### RETRY ################################
+begin retry
+*   *   F,2h,15m; G,16h,1h,1.5; F,4d,6h
+
+############################# REWRITE ################################
+begin rewrite
